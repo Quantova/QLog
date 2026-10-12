@@ -1,0 +1,61 @@
+{
+  "name": "@quantovainc/qlog",
+  "version": "0.1.0",
+  "description": "Post quantum tamper evident logs. Each entry is chained to the one before it and the writer seals the head with ML-DSA-65 under FIPS 204 and Quantova time proofs, so removal, insertion, change or truncation of sealed entries is detected, and an action can be shown to have been recorded after its intent was anchored.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "qlog": "bin/qlog.js"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "lib/",
+    "bin/",
+    "wasm/qlog_native.js",
+    "wasm/qlog_native_bg.wasm",
+    "wasm/qlog_native.d.ts",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "NOTICE",
+    "AUTHORS"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@quantovainc/qstamp": "0.1.5"
+  },
+  "keywords": [
+    "post-quantum",
+    "quantum-safe",
+    "tamper-evident",
+    "audit-log",
+    "hash-chain",
+    "transparency-log",
+    "ai-agents",
+    "ml-dsa",
+    "fips-204",
+    "quantova"
+  ],
+  "license": "Apache-2.0 OR MIT",
+  "author": "Quantova Inc",
+  "homepage": "https://github.com/Quantova/QLog",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Quantova/QLog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Quantova/QLog/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
