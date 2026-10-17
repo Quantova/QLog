@@ -78,7 +78,7 @@ When a checkpoint is anchored, only a 32 byte Qstamp commitment reaches the chai
 2. The genesis entry names the expected writer.
 3. A checkpoint is considered only when it concerns this log and is validly signed by the expected writer. Any other checkpoint is ignored, so no third party can disturb the result.
 4. A checkpoint that covers more entries than the log holds shows that the log was cut short, and a checkpoint whose head differs from the entry at its position shows that the log was changed after sealing. Either makes the result invalid.
-5. The anchor of each checkpoint is verified under the record kind with a SHA3 digest. Every anchored copy is checked and the earliest proven time is used. An attached receipt that does not belong to its checkpoint is ignored, and one whose anchor cannot be reached leaves the result indeterminate. A time of sealing later than a proven anchor, allowing five minutes for clock difference, makes the result invalid.
+5. The anchor of each checkpoint is verified under the record kind with a SHA3 digest. Every anchored copy is checked and the earliest proven time is used. A checkpoint anchored more than 24 hours after its sealing time, a window the verifier may change, or anchored after a time of verification that is given, does not prove its time and is reported as not proven. An attached receipt that does not belong to its checkpoint is ignored, and one whose anchor cannot be reached leaves the result indeterminate. A time of sealing later than a proven anchor, allowing five minutes for clock difference, makes the result invalid.
 6. Every entry up to the highest anchored checkpoint is sealed. Entries after it are reported as unsealed.
 7. No entry and no checkpoint may be dated after the time of verification, which is the present unless the verifier states another, allowing five minutes for clock difference.
 8. When a heartbeat policy is given, no two consecutive entries may be further apart than the permitted gap, and the last entry may be no older than that gap at the time of verification.
@@ -89,7 +89,7 @@ A result is valid only when the expected writer is given and every entry is seal
 
 ## Trust model of this release
 
-This release targets the Quantova test network. Anchors on that network carry no evidential weight. The signing module is compiled from the Quantova Q-Crypto library, which follows FIPS 204 and FIPS 202 and has been tested against the NIST vectors and cross checked against an independent implementation, but has not yet been independently audited or validated under FIPS 140-3.
+This release anchors on the live Quantova network Q-test-net-1. The signing module is compiled from the Quantova Q-Crypto library, which follows FIPS 204 and FIPS 202 and has been tested against the NIST vectors and cross checked against an independent implementation. It has not been validated under FIPS 140-3. Anchor times are confirmed by the endpoints a verifier queries, so a time is only as reliable as those endpoints. Verification names the endpoints it consulted and says whether they are the official endpoints of the network, and a verifier who needs independence from any single operator should query several independent endpoints.
 
 Entries are bound to the writer only through checkpoints. An entry after the last checkpoint is the claim of whoever holds the file, and the writer can still alter its own unsealed entries before it seals them. The times of entries are claims of the writer, bounded above by the anchor of the checkpoint that covers them. A heartbeat policy and frequent sealing narrow both windows.
 
@@ -158,7 +158,7 @@ const result = await qlog.verify(qlog.toJsonl(log), {
 
 ## Network
 
-The Quantova test network is named Q-test-net-1 with genesis hash ca91e093bb8de33e90db52d7c89876597d14760703793ea7211929e73e613062. Anchors are recorded by the official Qstamp contract on that network. The public endpoint is https://rpc-testnet.quantova.org.
+The live Quantova network is named Q-test-net-1 with genesis hash ca91e093bb8de33e90db52d7c89876597d14760703793ea7211929e73e613062. Anchors are recorded by the official Qstamp contract on that network. The public endpoint is https://rpc-testnet.quantova.org.
 
 ## Licence
 

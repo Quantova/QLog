@@ -101,6 +101,7 @@ export interface VerifyOptions {
   clients?: Array<string | unknown>;
   contract?: string;
   trustCustomContract?: boolean;
+  maxAnchorDelay?: number;
 }
 
 export interface VerifyCheck {
@@ -127,6 +128,8 @@ export interface VerifyResult {
   actionsIntentFirst?: number;
   payloadsChecked?: number;
   checks: VerifyCheck[];
+  endpoints: string[];
+  officialEndpoints: boolean | null;
 }
 
 export function generateKey(): Uint8Array;

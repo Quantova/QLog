@@ -30,7 +30,7 @@ const HELP = `qlog, post quantum tamper evident logs with Quantova time proofs
   qlog complete <checkpoint>... --pending FILE [--tx ID] [--rpc URL]
   qlog verify <log> (--writer-key-id HEX | --writer-public-key FILE) [--checkpoint FILE]...
               [--max-gap SECONDS] [--require-intent-first] [--payload SEQ=FILE]...
-              [--allow-unanchored] [--at TIME] [--rpc URL] [--json]
+              [--allow-unanchored] [--at TIME] [--max-anchor-delay SECONDS] [--rpc URL] [--json]
 
 A log is a file of JSON lines. Appending needs no key, the writer seals the head with a signed
 checkpoint and anchors it, and only sealed entries are proven. An action names its intent with --ref
@@ -54,7 +54,7 @@ const SPEC = {
   checkpoint: { flags: ['force'], values: ['key', 'note', 'out'] },
   anchor: { flags: [], values: ['seed-file', 'index', 'rpc', 'max-fee'] },
   complete: { flags: [], values: ['pending', 'tx', 'rpc'] },
-  verify: { flags: ['allow-unanchored', 'require-intent-first', 'json'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'rpc', 'at'], multi: ['checkpoint', 'payload'] },
+  verify: { flags: ['allow-unanchored', 'require-intent-first', 'json'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'rpc', 'at', 'max-anchor-delay'], multi: ['checkpoint', 'payload'] },
 };
 
 function parse(command, argv) {
@@ -643,6 +643,10 @@ async function cmdVerify(positional, flags) {
     opts.payloads = payloadsOf(flags.payload);
   }
   if (flags.at !== undefined) opts.at = flags.at;
+  if (flags['max-anchor-delay'] !== undefined) {
+    if (!/^[1-9][0-9]{0,9}$/.test(flags['max-anchor-delay'])) throw usageError('--max-anchor-delay is a whole number of seconds');
+    opts.maxAnchorDelay = Number(flags['max-anchor-delay']);
+  }
   if (flags.rpc) opts.rpc = flags.rpc;
   const text = readLogText(positional[0]);
   const res = await ql.verify(text, opts);
@@ -652,6 +656,10 @@ async function cmdVerify(positional, flags) {
     if (res.logId) console.log('log   ' + res.logId);
     if (res.entries !== undefined) console.log('entries ' + res.entries + ', sealed through ' + res.sealedThrough + ', unsealed ' + res.unsealed);
     for (const c of res.checks) console.log((c.ok ? 'ok    ' : c.transport ? 'retry ' : c.indeterminate ? 'open  ' : 'FAIL  ') + safe(c.name) + '  ' + safe(c.detail));
+    if ((res.endpoints || []).length) {
+      console.log('endpoints  ' + res.endpoints.map(safe).join(', '));
+      if (res.officialEndpoints === false) console.log('notice  anchor times were confirmed by an endpoint that is not the official one for this network, so they are only as reliable as that endpoint');
+    }
     console.log(res.status.toUpperCase());
   }
   return res.status === 'valid' ? 0 : res.status === 'indeterminate' ? 2 : 1;
