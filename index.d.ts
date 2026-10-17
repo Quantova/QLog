@@ -78,6 +78,8 @@ export interface AnchorOptions {
   client?: unknown;
   clients?: Array<string | unknown>;
   trustSingleEndpoint?: boolean;
+  allowLoopback?: boolean;
+  endpointAllowList?: string[];
   meter?: number;
   maxFee?: string | number;
   timeoutMs?: number;
@@ -102,6 +104,10 @@ export interface VerifyOptions {
   client?: unknown;
   clients?: Array<string | unknown>;
   trustSingleEndpoint?: boolean;
+  trustCustomEndpoints?: boolean;
+  allowLoopback?: boolean;
+  endpointAllowList?: string[];
+  expectedSender?: string | string[];
   contract?: string;
   trustCustomContract?: boolean;
   maxAnchorDelay?: number;
@@ -113,11 +119,12 @@ export interface VerifyCheck {
   detail: string;
   transport: boolean;
   indeterminate: boolean;
+  unproven: boolean;
 }
 
 export interface VerifyResult {
   valid: boolean;
-  status: 'valid' | 'invalid' | 'indeterminate';
+  status: 'valid' | 'invalid' | 'indeterminate' | 'unproven';
   logId: string | null;
   writerKeyId: string;
   entries?: number;
@@ -144,7 +151,7 @@ export function append(log: Entry[], options: AppendOptions): Entry;
 export function heartbeat(log: Entry[], options?: HeartbeatOptions): Entry;
 export function checkpoint(log: Entry[], options: CheckpointOptions): Checkpoint;
 export function anchor(checkpoints: Checkpoint | Checkpoint[], options: AnchorOptions): Promise<Checkpoint[]>;
-export function complete(checkpoints: Checkpoint | Checkpoint[], pending: unknown, options?: { rpc?: string | string[]; client?: unknown; clients?: Array<string | unknown>; trustSingleEndpoint?: boolean; timeoutMs?: number }): Promise<Checkpoint[]>;
+export function complete(checkpoints: Checkpoint | Checkpoint[], pending: unknown, options?: { rpc?: string | string[]; client?: unknown; clients?: Array<string | unknown>; trustSingleEndpoint?: boolean; allowLoopback?: boolean; endpointAllowList?: string[]; timeoutMs?: number }): Promise<Checkpoint[]>;
 export function verify(log: Entry[] | string, options: VerifyOptions): Promise<VerifyResult>;
 export function toJsonl(log: Entry[]): string;
 export function fromJsonl(text: string): unknown[];

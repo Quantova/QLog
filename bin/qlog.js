@@ -30,23 +30,41 @@ const HELP = `qlog, post quantum tamper evident logs with Quantova time proofs
               [--ref SEQ --after <anchored checkpoint>] [--note TEXT]
   qlog heartbeat <log> [--note TEXT]
   qlog checkpoint <log> --key <writer keyfile> [--note TEXT] --out FILE
-  qlog anchor <checkpoint>... --seed-file <file> [--index N] [--rpc URL]... [--trust-single-endpoint] [--max-fee N]
-  qlog complete <checkpoint>... --pending FILE [--tx ID] [--rpc URL]... [--trust-single-endpoint]
+  qlog anchor <checkpoint>... --seed-file <file> [--index N] [--rpc URL]... [--trust-single-endpoint] [--allow-endpoint HOST]... [--allow-loopback] [--max-fee N]
+  qlog complete <checkpoint>... --pending FILE [--tx ID] [--rpc URL]... [--trust-single-endpoint] [--allow-endpoint HOST]...
+                [--allow-loopback]
   qlog verify <log> (--writer-key-id HEX | --writer-public-key FILE) [--checkpoint FILE]...
               [--max-gap SECONDS] [--require-intent-first] [--payload SEQ=FILE]...
-              [--allow-unanchored] [--at TIME] [--max-anchor-delay SECONDS] [--rpc URL]... [--trust-single-endpoint] [--json]
+              [--allow-unanchored] [--at TIME] [--max-anchor-delay SECONDS] [--expect-sender ADDRESS]... [--rpc URL]...
+              [--trust-custom-endpoints] [--trust-single-endpoint] [--allow-endpoint HOST]... [--allow-loopback] [--json]
 
 A log is a file of JSON lines. Appending needs no key, the writer seals the head with a signed
 checkpoint and anchors it, and only sealed entries are proven. An action names its intent with --ref
 and the anchored checkpoint covering that intent with --after. If an anchor is interrupted after its
 transaction was sent, the pending stamp is kept beside the first checkpoint and complete finishes it.
+With --max-gap every entry must be proven by an anchored checkpoint within that gap of its own time, so
+heartbeats written after a silence verify INVALID. An anchor counts only when it is proven by a finality
+certificate or by official endpoints of two different operators, any other anchor is UNPROVEN and never VALID.
+Endpoints given with --rpc are consulted by verify only with --trust-custom-endpoints, loopback endpoints only
+with --allow-loopback and private network endpoints only when named with --allow-endpoint. --expect-sender names
+the account that must have signed each anchor.
 
-Exit codes are 0 for valid, 1 for invalid or an error, 2 for indeterminate and 64 for usage errors.`;
+Exit codes are 0 for valid, 1 for invalid or an error, 2 for indeterminate or unproven and 64 for usage errors.`;
 
 function usageError(message) {
   const e = new Error(message);
   e.usage = true;
   return e;
+}
+
+function endpointOptions(flags) {
+  const out = {};
+  if (flags.rpc) out.clients = flags.rpc;
+  if (flags['allow-endpoint']) out.endpointAllowList = flags['allow-endpoint'];
+  if (flags['trust-single-endpoint']) out.trustSingleEndpoint = true;
+  if (flags['trust-custom-endpoints']) out.trustCustomEndpoints = true;
+  if (flags['allow-loopback']) out.allowLoopback = true;
+  return out;
 }
 
 const SPEC = {
@@ -56,9 +74,9 @@ const SPEC = {
   append: { flags: [], values: ['kind', 'payload-file', 'digest', 'ref', 'after', 'note'] },
   heartbeat: { flags: [], values: ['note'] },
   checkpoint: { flags: ['force'], values: ['key', 'note', 'out'] },
-  anchor: { flags: ['trust-single-endpoint'], values: ['seed-file', 'index', 'max-fee'], multi: ['rpc'] },
-  complete: { flags: ['trust-single-endpoint'], values: ['pending', 'tx'], multi: ['rpc'] },
-  verify: { flags: ['allow-unanchored', 'require-intent-first', 'json', 'trust-single-endpoint'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'at', 'max-anchor-delay'], multi: ['checkpoint', 'payload', 'rpc'] },
+  anchor: { flags: ['trust-single-endpoint', 'allow-loopback'], values: ['seed-file', 'index', 'max-fee'], multi: ['rpc', 'allow-endpoint'] },
+  complete: { flags: ['trust-single-endpoint', 'allow-loopback'], values: ['pending', 'tx'], multi: ['rpc', 'allow-endpoint'] },
+  verify: { flags: ['allow-unanchored', 'require-intent-first', 'json', 'trust-single-endpoint', 'trust-custom-endpoints', 'allow-loopback'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'at', 'max-anchor-delay'], multi: ['checkpoint', 'payload', 'rpc', 'allow-endpoint', 'expect-sender'] },
 };
 
 function parse(command, argv) {
@@ -712,7 +730,7 @@ async function cmdAnchor(positional, flags) {
   };
   let anchored;
   try {
-    anchored = await ql.anchor(envs, { seed, index, network: 'testnet', clients: flags.rpc, trustSingleEndpoint: !!flags['trust-single-endpoint'], maxFee: flags['max-fee'], onPending: keep });
+    anchored = await ql.anchor(envs, { seed, index, network: 'testnet', ...endpointOptions(flags), maxFee: flags['max-fee'], onPending: keep });
   } catch (e) {
     if (e && e.pending && typeof e.pending === 'object') {
       try {
@@ -746,7 +764,7 @@ async function cmdComplete(positional, flags) {
     if (e && typeof e === 'object' && !Array.isArray(e)) delete e.anchor;
     return e;
   });
-  const anchored = await ql.complete(envs, pending, { clients: flags.rpc, trustSingleEndpoint: !!flags['trust-single-endpoint'] });
+  const anchored = await ql.complete(envs, pending, endpointOptions(flags));
   const code = saveAnchored(positional, anchored);
   if (code === 0) {
     fs.rmSync(pendingFile, { force: true });
@@ -796,8 +814,8 @@ async function cmdVerify(positional, flags) {
     if (!/^[1-9][0-9]{0,9}$/.test(flags['max-anchor-delay'])) throw usageError('--max-anchor-delay is a whole number of seconds');
     opts.maxAnchorDelay = Number(flags['max-anchor-delay']);
   }
-  if (flags.rpc) opts.clients = flags.rpc;
-  if (flags['trust-single-endpoint']) opts.trustSingleEndpoint = true;
+  Object.assign(opts, endpointOptions(flags));
+  if (flags['expect-sender']) opts.expectedSender = flags['expect-sender'];
   const text = readLogText(positional[0]);
   const res = await ql.verify(text, opts);
   if (flags.json) {
@@ -805,14 +823,14 @@ async function cmdVerify(positional, flags) {
   } else {
     if (res.logId) console.log('log   ' + res.logId);
     if (res.entries !== undefined) console.log('entries ' + res.entries + ', sealed through ' + res.sealedThrough + ', unsealed ' + res.unsealed);
-    for (const c of res.checks) console.log((c.ok ? 'ok    ' : c.transport ? 'retry ' : c.indeterminate ? 'open  ' : 'FAIL  ') + safe(c.name) + '  ' + safe(c.detail));
+    for (const c of res.checks) console.log((c.ok ? 'ok    ' : c.transport ? 'retry ' : c.indeterminate || c.unproven ? 'open  ' : 'FAIL  ') + safe(c.name) + '  ' + safe(c.detail));
     if ((res.endpoints || []).length) {
       console.log('endpoints  ' + res.endpoints.map(safe).join(', '));
-      if (res.officialEndpoints === false) console.log('notice  anchor times were confirmed by an endpoint that is not the official one for this network, so they are only as reliable as that endpoint');
+      if (res.officialEndpoints === false) console.log('notice  endpoints other than the official ones of this network were consulted, an anchor confirmed only by them is not proven');
     }
     console.log(res.status.toUpperCase());
   }
-  return res.status === 'valid' ? 0 : res.status === 'indeterminate' ? 2 : 1;
+  return res.status === 'valid' ? 0 : res.status === 'indeterminate' || res.status === 'unproven' ? 2 : 1;
 }
 
 async function main() {
