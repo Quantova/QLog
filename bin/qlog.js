@@ -9,6 +9,7 @@ const path = require('path');
 const crypto = require('crypto');
 const ql = require('..');
 const { chainProblem } = require('../lib/log');
+const F = require('../lib/format');
 
 const ENVELOPE_MAX = 1024 * 1024;
 const CHECKPOINT_MAX = 64 * 1024;
@@ -16,6 +17,9 @@ const LOCK_WAIT_MS = 5000;
 const PAYLOAD_MAX = 64 * 1024 * 1024;
 const PAYLOADS_TOTAL_MAX = 256 * 1024 * 1024;
 const LOG_MAX = 256 * 1024 * 1024;
+const STATE_FORMAT = 'qlog-append-state/1';
+const STATE_MAX = 4096;
+const LINE_BYTES_MAX = 4 * 8192 + 1;
 
 const HELP = `qlog, post quantum tamper evident logs with Quantova time proofs
 
@@ -26,11 +30,11 @@ const HELP = `qlog, post quantum tamper evident logs with Quantova time proofs
               [--ref SEQ --after <anchored checkpoint>] [--note TEXT]
   qlog heartbeat <log> [--note TEXT]
   qlog checkpoint <log> --key <writer keyfile> [--note TEXT] --out FILE
-  qlog anchor <checkpoint>... --seed-file <file> [--index N] [--rpc URL] [--max-fee N]
-  qlog complete <checkpoint>... --pending FILE [--tx ID] [--rpc URL]
+  qlog anchor <checkpoint>... --seed-file <file> [--index N] [--rpc URL]... [--trust-single-endpoint] [--max-fee N]
+  qlog complete <checkpoint>... --pending FILE [--tx ID] [--rpc URL]... [--trust-single-endpoint]
   qlog verify <log> (--writer-key-id HEX | --writer-public-key FILE) [--checkpoint FILE]...
               [--max-gap SECONDS] [--require-intent-first] [--payload SEQ=FILE]...
-              [--allow-unanchored] [--at TIME] [--max-anchor-delay SECONDS] [--rpc URL] [--json]
+              [--allow-unanchored] [--at TIME] [--max-anchor-delay SECONDS] [--rpc URL]... [--trust-single-endpoint] [--json]
 
 A log is a file of JSON lines. Appending needs no key, the writer seals the head with a signed
 checkpoint and anchors it, and only sealed entries are proven. An action names its intent with --ref
@@ -52,9 +56,9 @@ const SPEC = {
   append: { flags: [], values: ['kind', 'payload-file', 'digest', 'ref', 'after', 'note'] },
   heartbeat: { flags: [], values: ['note'] },
   checkpoint: { flags: ['force'], values: ['key', 'note', 'out'] },
-  anchor: { flags: [], values: ['seed-file', 'index', 'rpc', 'max-fee'] },
-  complete: { flags: [], values: ['pending', 'tx', 'rpc'] },
-  verify: { flags: ['allow-unanchored', 'require-intent-first', 'json'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'rpc', 'at', 'max-anchor-delay'], multi: ['checkpoint', 'payload'] },
+  anchor: { flags: ['trust-single-endpoint'], values: ['seed-file', 'index', 'max-fee'], multi: ['rpc'] },
+  complete: { flags: ['trust-single-endpoint'], values: ['pending', 'tx'], multi: ['rpc'] },
+  verify: { flags: ['allow-unanchored', 'require-intent-first', 'json', 'trust-single-endpoint'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'at', 'max-anchor-delay'], multi: ['checkpoint', 'payload', 'rpc'] },
 };
 
 function parse(command, argv) {
@@ -402,7 +406,142 @@ async function withLock(file, fn) {
   }
 }
 
-function appendEntry(file, build) {
+function statePath(file) {
+  const lock = lockPath(file);
+  return lock.slice(0, -'.lock'.length) + '.state';
+}
+
+function readState(file) {
+  let fd;
+  try {
+    fd = fs.openSync(statePath(file), fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+  } catch (e) {
+    return null;
+  }
+  try {
+    const st = fs.fstatSync(fd);
+    if (!st.isFile() || st.size > STATE_MAX) return null;
+    const buf = Buffer.alloc(st.size);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    const s = JSON.parse(buf.subarray(0, n).toString('utf8'));
+    const digits = /^[0-9]{1,30}$/;
+    if (!s || s.format !== STATE_FORMAT) return null;
+    for (const k of ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs', 'lineStart']) if (typeof s[k] !== 'string' || !digits.test(s[k])) return null;
+    if (!Number.isSafeInteger(s.seq) || s.seq < 0 || typeof s.head !== 'string' || !/^[0-9a-f]{64}$/.test(s.head) || typeof s.logId !== 'string') return null;
+    return s;
+  } catch (e) {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function writeState(file, fd, entry, lineStart) {
+  try {
+    const st = fs.fstatSync(fd, { bigint: true });
+    const state = {
+      format: STATE_FORMAT,
+      dev: String(st.dev),
+      ino: String(st.ino),
+      size: String(st.size),
+      mtimeNs: String(st.mtimeNs),
+      ctimeNs: String(st.ctimeNs),
+      lineStart: String(lineStart),
+      seq: entry.seq,
+      head: F.entryHash(entry),
+      logId: entry.logId,
+    };
+    atomicWrite(statePath(file), JSON.stringify(state) + '\n', true);
+  } catch (e) {
+    try {
+      fs.rmSync(statePath(file), { force: true });
+    } catch (e2) {
+      return;
+    }
+  }
+}
+
+function readAt(fd, offset, length) {
+  const buf = Buffer.alloc(length);
+  let off = 0;
+  while (off < length) {
+    const n = fs.readSync(fd, buf, off, length - off, offset + off);
+    if (n === 0) break;
+    off += n;
+  }
+  return buf.subarray(0, off);
+}
+
+function lineAt(fd, offset, end) {
+  const chunk = readAt(fd, offset, Math.min(LINE_BYTES_MAX, end - offset));
+  const nl = chunk.indexOf(10);
+  if (nl < 0) return null;
+  const entry = ql.fromJsonl(decodeLog(chunk.subarray(0, nl + 1)))[0];
+  return { entry, next: offset + nl + 1 };
+}
+
+function nextLineStart(fd, from, end) {
+  if (from >= end) return end;
+  const chunk = readAt(fd, from - 1, Math.min(LINE_BYTES_MAX, end - from + 1));
+  const nl = chunk.indexOf(10);
+  return nl < 0 ? end : from + nl;
+}
+
+function findEntry(fd, seq, end) {
+  let lo = 0;
+  let hi = end;
+  const first = lineAt(fd, 0, end);
+  if (!first) return null;
+  if (first.entry.seq === seq) return first.entry;
+  if (first.entry.seq > seq) return null;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    const p = nextLineStart(fd, Math.max(mid, lo + 1), end);
+    if (p >= hi) {
+      hi = mid;
+      continue;
+    }
+    const at = lineAt(fd, p, end);
+    if (!at) return null;
+    if (at.entry.seq === seq) return at.entry;
+    if (at.entry.seq < seq) lo = p;
+    else hi = p;
+  }
+  return null;
+}
+
+function recordedTail(file, fd, refs) {
+  const state = readState(file);
+  if (!state) return null;
+  const st = fs.fstatSync(fd, { bigint: true });
+  if (st.size > BigInt(LOG_MAX)) return null;
+  if (String(st.dev) !== state.dev || String(st.ino) !== state.ino || String(st.size) !== state.size) return null;
+  if (String(st.mtimeNs) !== state.mtimeNs || String(st.ctimeNs) !== state.ctimeNs) return null;
+  const size = Number(st.size);
+  const lineStart = Number(state.lineStart);
+  if (lineStart >= size || size - lineStart > LINE_BYTES_MAX) return null;
+  try {
+    const tail = readAt(fd, lineStart, size - lineStart);
+    if (tail.length !== size - lineStart || tail.indexOf(10) !== tail.length - 1) return null;
+    const lines = ql.fromJsonl(decodeLog(tail));
+    const last = F.parseEntry(lines[0]);
+    if (last.seq !== state.seq || last.logId !== state.logId || F.entryHash(last) !== state.head) return null;
+    if (lineStart === 0 && last.seq !== 0) return null;
+    const log = [];
+    log[last.seq] = lines[0];
+    for (const r of refs) {
+      if (!Number.isSafeInteger(r) || r < 0 || r >= last.seq) continue;
+      const found = findEntry(fd, r, lineStart);
+      if (!found) return null;
+      log[r] = found;
+    }
+    return { log, size };
+  } catch (e) {
+    return null;
+  }
+}
+
+function appendEntry(file, build, refs) {
   return withLock(file, () => {
     const flags = fs.constants.O_RDWR | fs.constants.O_APPEND | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
     let fd;
@@ -415,13 +554,22 @@ function appendEntry(file, build) {
       const st = fs.fstatSync(fd);
       if (!st.isFile()) throw usageError('the log file must be a regular file');
       if (st.nlink !== 1) throw usageError('the log file has other hard links, which would let two writers bypass the lock');
-      const bytes = readAll(fd, 'log file', LOG_MAX);
-      const log = entriesOf(decodeLog(bytes));
-      const problem = chainProblem(log);
-      if (problem) {
-        const err = new Error('the log is damaged and nothing was appended, ' + problem.message);
-        err.invalid = true;
-        throw err;
+      const recorded = recordedTail(file, fd, refs || []);
+      let log;
+      let size;
+      if (recorded) {
+        log = recorded.log;
+        size = recorded.size;
+      } else {
+        const bytes = readAll(fd, 'log file', LOG_MAX);
+        log = entriesOf(decodeLog(bytes));
+        const problem = chainProblem(log);
+        if (problem) {
+          const err = new Error('the log is damaged and nothing was appended, ' + problem.message);
+          err.invalid = true;
+          throw err;
+        }
+        size = bytes.length;
       }
       const entry = build(log);
       const line = Buffer.from(JSON.stringify(entry, ql.ENTRY_FIELDS) + '\n', 'utf8');
@@ -431,13 +579,14 @@ function appendEntry(file, build) {
         fs.fsyncSync(fd);
       } catch (e) {
         try {
-          fs.ftruncateSync(fd, bytes.length);
+          fs.ftruncateSync(fd, size);
           fs.fsyncSync(fd);
         } catch (e2) {
-          throw new Error('the entry could not be written (' + (e.code || 'error') + ') and the log could not be restored to its previous ' + bytes.length + ' bytes, so it now ends with an incomplete line that must be removed by hand');
+          throw new Error('the entry could not be written (' + (e.code || 'error') + ') and the log could not be restored to its previous ' + size + ' bytes, so it now ends with an incomplete line that must be removed by hand');
         }
         throw e;
       }
+      writeState(file, fd, entry, size);
       return entry;
     } finally {
       fs.closeSync(fd);
@@ -477,7 +626,7 @@ async function cmdAppend(positional, flags) {
   const opts = Object.assign({ kind, note: flags.note }, readDigestOption(flags));
   if (flags.ref !== undefined) opts.ref = seqFlag(flags.ref, 'ref');
   if (flags.after !== undefined) opts.after = readJson(flags.after, 'checkpoint', false, CHECKPOINT_MAX);
-  const entry = await appendEntry(positional[0], (log) => ql.append(log, opts));
+  const entry = await appendEntry(positional[0], (log) => ql.append(log, opts), opts.ref === undefined ? [] : [opts.ref]);
   console.log(kind + ' ' + entry.seq + ' appended to log ' + entry.logId);
   return 0;
 }
@@ -563,7 +712,7 @@ async function cmdAnchor(positional, flags) {
   };
   let anchored;
   try {
-    anchored = await ql.anchor(envs, { seed, index, network: 'testnet', rpc: flags.rpc, maxFee: flags['max-fee'], onPending: keep });
+    anchored = await ql.anchor(envs, { seed, index, network: 'testnet', clients: flags.rpc, trustSingleEndpoint: !!flags['trust-single-endpoint'], maxFee: flags['max-fee'], onPending: keep });
   } catch (e) {
     if (e && e.pending && typeof e.pending === 'object') {
       try {
@@ -597,7 +746,7 @@ async function cmdComplete(positional, flags) {
     if (e && typeof e === 'object' && !Array.isArray(e)) delete e.anchor;
     return e;
   });
-  const anchored = await ql.complete(envs, pending, { rpc: flags.rpc });
+  const anchored = await ql.complete(envs, pending, { clients: flags.rpc, trustSingleEndpoint: !!flags['trust-single-endpoint'] });
   const code = saveAnchored(positional, anchored);
   if (code === 0) {
     fs.rmSync(pendingFile, { force: true });
@@ -647,7 +796,8 @@ async function cmdVerify(positional, flags) {
     if (!/^[1-9][0-9]{0,9}$/.test(flags['max-anchor-delay'])) throw usageError('--max-anchor-delay is a whole number of seconds');
     opts.maxAnchorDelay = Number(flags['max-anchor-delay']);
   }
-  if (flags.rpc) opts.rpc = flags.rpc;
+  if (flags.rpc) opts.clients = flags.rpc;
+  if (flags['trust-single-endpoint']) opts.trustSingleEndpoint = true;
   const text = readLogText(positional[0]);
   const res = await ql.verify(text, opts);
   if (flags.json) {

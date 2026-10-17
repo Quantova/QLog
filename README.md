@@ -1,6 +1,6 @@
 # QLog
 
-QLog is a post quantum tamper evident log. It keeps an ordered record of events, intentions and actions in which every entry is bound to the one before it by a SHA3 hash, and the writer periodically seals the head of the record with a checkpoint signed with the Module Lattice Digital Signature Algorithm, parameter set 65, as standardised in FIPS 204. Each checkpoint can carry a Qstamp time proof recorded on the Quantova network. Once a checkpoint is anchored, no entry it covers can be removed, inserted, reordered or changed without detection, and an action can be shown to have been recorded only after its intent was anchored in public.
+QLog is a post quantum tamper evident log. It keeps an ordered record of events, intentions and actions in which every entry is bound to the one before it by a SHA3 hash, and the writer periodically seals the head of the record with a checkpoint signed with the Module Lattice Digital Signature Algorithm, parameter set 65, as standardised in FIPS 204. Each checkpoint can carry a Qstamp time proof recorded on the Quantova network. Once a checkpoint is anchored, no entry it covers can be inserted, reordered or changed without detection, and no entry it covers can be removed without detection by a verifier that holds that checkpoint, and an action can be shown to have been recorded only after its intent was anchored in public.
 
 ## What QLog is
 
@@ -89,7 +89,7 @@ A result is valid only when the expected writer is given and every entry is seal
 
 ## Trust model of this release
 
-This release anchors on the live Quantova network Q-test-net-1. The signing module is compiled from the Quantova Q-Crypto library, which follows FIPS 204 and FIPS 202 and has been tested against the NIST vectors and cross checked against an independent implementation. It has not been validated under FIPS 140-3. Anchor times are confirmed by the endpoints a verifier queries, so a time is only as reliable as those endpoints. Verification names the endpoints it consulted and says whether they are the official endpoints of the network, and a verifier who needs independence from any single operator should query several independent endpoints.
+This release anchors on the live Quantova network Q-test-net-1. The signing module is compiled from the Quantova Q-Crypto library, which follows FIPS 204 and FIPS 202 and has been tested against the NIST vectors and cross checked against an independent implementation. It has not been validated under FIPS 140-3. Anchor times are confirmed by the endpoints a verifier queries and are accepted only when at least two endpoints run by different operators agree. Verification names the endpoints it consulted and says whether they are the official endpoints of the network, and a verifier who needs independence from any single operator should query several independent endpoints.
 
 Entries are bound to the writer only through checkpoints. An entry after the last checkpoint is the claim of whoever holds the file, and the writer can still alter its own unsealed entries before it seals them. The times of entries are claims of the writer, bounded above by the anchor of the checkpoint that covers them. A heartbeat policy and frequent sealing narrow both windows.
 
@@ -123,7 +123,7 @@ qlog anchor cp-2.json --seed-file account.key
 qlog verify agent.log --writer-public-key writer.pub.json --checkpoint cp-1.json --checkpoint cp-2.json --require-intent-first --max-gap 600 --payload 1=request.json
 ```
 
-Appends to one log are serialised by a lock file beside it, a log with other hard links is refused, and each append checks the whole chain before it writes and restores the file if the write fails. If an anchor is interrupted after its transaction was sent, the pending stamp is saved beside the first checkpoint and the complete command finishes it without paying again. Checkpoints without anchors are accepted only with the allow unanchored flag. The command exits with status 0 when the result is valid, 1 when it is invalid or cannot be read, 2 when it cannot be decided, and 64 for usage errors. Key files must be readable only by their owner, and key and log files are never followed through symbolic links.
+Appends to one log are serialised by a lock file beside it, a log with other hard links is refused, and each append restores the file if the write fails. After every append the tool records the size, the change times, the file identity and the hash of the last entry in a state file beside the log. The next append reads only that last entry when the log is still exactly as recorded, and checks the whole chain before it writes whenever the state file is missing or the log was changed by anything else, so the cost of an append does not grow with the length of the log and no append extends a log whose end it has not checked. The verify command always checks the whole chain. If an anchor is interrupted after its transaction was sent, the pending stamp is saved beside the first checkpoint and the complete command finishes it without paying again. Checkpoints without anchors are accepted only with the allow unanchored flag. The command exits with status 0 when the result is valid, 1 when it is invalid or cannot be read, 2 when it cannot be decided, and 64 for usage errors. Key files must be readable only by their owner, and key and log files are never followed through symbolic links.
 
 ## Programmatic use
 
@@ -158,7 +158,7 @@ const result = await qlog.verify(qlog.toJsonl(log), {
 
 ## Network
 
-The live Quantova network is named Q-test-net-1 with genesis hash ca91e093bb8de33e90db52d7c89876597d14760703793ea7211929e73e613062. Anchors are recorded by the official Qstamp contract on that network. The public endpoint is https://rpc-testnet.quantova.org.
+The live Quantova network is named Q-test-net-1 with genesis hash ca91e093bb8de33e90db52d7c89876597d14760703793ea7211929e73e613062. Anchors are recorded by the official Qstamp contract on that network. The public endpoint is https://rpc-testnet.quantova.org. Chain data is accepted only when at least two endpoints run by different operators agree. Give them with the rpc or clients option, or with --rpc once for each on the command line. The option trustSingleEndpoint, or --trust-single-endpoint, relies on one endpoint, which can then invent an anchor alone.
 
 ## Licence
 
