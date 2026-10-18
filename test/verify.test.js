@@ -134,3 +134,25 @@ test('endpoints chosen by the caller need trustCustomEndpoints, loopback needs a
   const right = await ql.verify(log, Object.assign({ expectedSender: chain.core.address(SEED, 0) }, base, ep));
   assert.strictEqual(right.status, 'valid', JSON.stringify(right.checks.filter((c) => !c.ok)));
 });
+
+test('options are read only from the object given and never from Object.prototype', async () => {
+  const now = Math.floor(Date.now() / 1000);
+  const w = ql.generateKey();
+  const log = [ql.create({ key: w, time: iso(now - 600) })];
+  log.push(ql.append(log, { kind: 'event', payload: Buffer.from('a'), time: iso(now - 500) }));
+  const cp = ql.checkpoint(log, { key: w, sealedAt: iso(now - 300) });
+  const opts = { writerKeyId: ql.keyId(w), checkpoints: [cp], at: iso(now) };
+  const before = await ql.verify(log, opts);
+  assert.notStrictEqual(before.status, 'valid');
+  try {
+    Object.prototype.requireAnchor = false;
+    Object.prototype.note = 'planted';
+    const after = await ql.verify(log, opts);
+    assert.strictEqual(after.status, before.status);
+    const next = ql.append(log, { kind: 'event', payload: Buffer.from('b'), time: iso(now - 100) });
+    assert.strictEqual(next.note, '');
+  } finally {
+    delete Object.prototype.requireAnchor;
+    delete Object.prototype.note;
+  }
+});
