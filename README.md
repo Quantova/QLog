@@ -96,6 +96,16 @@ Entries are bound to the writer only through checkpoints. An entry after the las
 
 Truncation is detected only relative to the checkpoints the verifier holds. A writer that withholds its latest checkpoint and cuts the log back to an earlier one presents a log that verifies as complete up to that earlier point, and Qstamp commitments are salted, so they cannot be found on the ledger without the checkpoint. A verifier that needs completeness should therefore receive each checkpoint as it is anchored, for example through a feed to the auditor or regulator, and keep its own copy. A writer that keeps two diverging logs under the same log identifier is detected when a verifier receives checkpoints from both, because one of them will not match the log. Matching the writer key to an accountable person or system is a matter for the organisation, for example through a published key description. Notes accept only visible characters in Unicode normal form C, and a log holds at most one million entries, after which a new log is started.
 
+## Threat model
+
+QLog protects the log file, its checkpoints, the writer key, the content that each entry fingerprints, and the receipts of anchored checkpoints.
+
+It trusts the writer key that the verifier names, the network values pinned in the Qstamp release it depends on, and the storage that holds the key. It does not trust the gateway or any endpoint, the operator of the writing system or any party that holds or presents the log.
+
+Every entry carries the hash of the one before it and each checkpoint is signed over the head of the log, so an entry covered by an anchored checkpoint cannot be changed, inserted or reordered without detection, and a log cut short is detected against the checkpoints the verifier holds. Checkpoints use the context string quantova/qlog/1 and name their log and writer, so a checkpoint signed for another SDK, log or key is ignored, and every anchor is checked against the genesis and contract pinned in the Qstamp release. A hostile gateway cannot make an unproven anchor count, and the time of verification comes from the chain unless the verifier gives one, never from the local clock. A checkpoint anchored more than 24 hours after its sealing time does not prove that time, and a heartbeat policy exposes a writer that falls silent and later backdates entries. When intent first is required, a second action for one intent is invalid, and append refuses to write it. Appends are serialised by a lock, a log with other hard links is refused, log lines must be canonical JSON, and every input file has a fixed size limit.
+
+QLog has no statement that revokes a writer key. When the key is exposed the organisation retires it and starts a new log under a new key, and a stolen key cannot give new checkpoints an anchor earlier than the moment it is used. Left to the integrator are the protection of the key, entries after the last anchored checkpoint, which remain the claim of whoever holds the file, receiving each checkpoint as it is anchored so that a writer cannot withhold its latest one, and matching the writer key to an accountable system.
+
 ## Installation
 
 ```
