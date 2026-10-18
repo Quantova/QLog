@@ -30,14 +30,15 @@ test('hostile log, checkpoint and pending stamp files make the command line exit
     const headCopy = put('head-copy.json', JSON.stringify(w.seals.head));
     const pending = put('pending.json', '{}');
     const intent = put('intent.json', JSON.stringify(w.anchored.intent));
-    const appendTo = put('append.jsonl', logText);
+    const openIntent = w.ql.toJsonl(w.log.slice(0, 3));
+    const appendTo = put('append.jsonl', openIntent);
     const digest = 'ab'.repeat(32);
     const verifyTail = ['--writer-key-id', w.writerKeyId, '--allow-unanchored', '--at', w.at];
 
     const control = await runCli(BIN, ['verify', log, '--checkpoint', head].concat(verifyTail));
     assert.strictEqual(control.code, 0, control.out + control.err);
     assert.ok(SAYS_VALID.test(control.out), control.out);
-    const appendControl = await runCli(BIN, ['append', put('append-control.jsonl', logText), '--kind', 'action', '--ref', '2', '--digest', digest, '--after', intent]);
+    const appendControl = await runCli(BIN, ['append', put('append-control.jsonl', openIntent), '--kind', 'action', '--ref', '2', '--digest', digest, '--after', intent]);
     assert.strictEqual(appendControl.code, 0, appendControl.out + appendControl.err);
 
     const logs = await hostileCampaign({
@@ -78,7 +79,7 @@ test('hostile log, checkpoint and pending stamp files make the command line exit
       ],
     });
     t.diagnostic('anchored checkpoint ' + afters.length + ' runs, slowest ' + Math.max(...afters.map((r) => r.ms)) + ' ms');
-    assert.strictEqual(fs.readFileSync(appendTo, 'utf8'), logText);
+    assert.strictEqual(fs.readFileSync(appendTo, 'utf8'), openIntent);
 
     const pendings = await hostileCampaign({
       bin: BIN,
