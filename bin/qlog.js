@@ -234,6 +234,35 @@ function atomicWrite(dest, data, force) {
   }
 }
 
+function strictJson(text) {
+  const value = JSON.parse(text);
+  const stack = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    const top = stack[stack.length - 1];
+    if (ch === '"') {
+      let j = i + 1;
+      while (text[j] !== '"') j += text[j] === '\\' ? 2 : 1;
+      if (top && top.keys && top.expectKey) {
+        const key = JSON.parse(text.slice(i, j + 1));
+        if (top.keys.has(key)) throw new Error('the JSON repeats the key ' + JSON.stringify(key));
+        top.keys.add(key);
+        top.expectKey = false;
+      }
+      i = j;
+    } else if (ch === '{') {
+      stack.push({ keys: new Set(), expectKey: true });
+    } else if (ch === '[') {
+      stack.push({ keys: null });
+    } else if (ch === '}' || ch === ']') {
+      stack.pop();
+    } else if (ch === ',' && top && top.keys) {
+      top.expectKey = true;
+    }
+  }
+  return value;
+}
+
 function readJson(file, what, invalidExit, limit) {
   const max = limit || ENVELOPE_MAX;
   const fd = openRegular(file, what);
@@ -252,7 +281,7 @@ function readJson(file, what, invalidExit, limit) {
   };
   if (n > max) throw bad('the ' + what + ' is larger than ' + max + ' bytes');
   try {
-    return JSON.parse(buf.subarray(0, n).toString('utf8'));
+    return strictJson(buf.subarray(0, n).toString('utf8'));
   } catch (e) {
     throw bad('the ' + what + ' ' + safe(file) + ' is not valid JSON');
   }
@@ -441,7 +470,7 @@ function readState(file) {
     if (!st.isFile() || st.size > STATE_MAX) return null;
     const buf = Buffer.alloc(st.size);
     const n = fs.readSync(fd, buf, 0, buf.length, 0);
-    const s = JSON.parse(buf.subarray(0, n).toString('utf8'));
+    const s = strictJson(buf.subarray(0, n).toString('utf8'));
     const digits = /^[0-9]{1,30}$/;
     if (!s || s.format !== STATE_FORMAT) return null;
     for (const k of ['dev', 'ino', 'size', 'mtimeNs', 'ctimeNs', 'lineStart']) if (typeof s[k] !== 'string' || !digits.test(s[k])) return null;
