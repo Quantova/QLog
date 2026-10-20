@@ -1,6 +1,6 @@
 {
   "name": "@quantovainc/qlog",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Post quantum tamper evident logs. Each entry is chained to the one before it and the writer seals the head with ML-DSA-65 under FIPS 204 and Quantova time proofs, so removal, insertion, change or truncation of sealed entries is detected, and an action can be shown to have been recorded after its intent was anchored.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -39,7 +39,7 @@
     "linux"
   ],
   "dependencies": {
-    "@quantovainc/qstamp": "0.4.1"
+    "@quantovainc/qstamp": "0.4.2"
   },
   "keywords": [
     "post-quantum",
