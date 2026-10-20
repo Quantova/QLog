@@ -7,9 +7,8 @@ const assert = require('node:assert');
 const { cliCampaign, runCli, tempDir, SAYS_VALID } = require('./fuzz');
 const { hostileCampaign, summary } = require('./hostile');
 const { honest, ROOT } = require('./honest');
-const { qstampRoot } = require('./chain');
 
-const qstamp = require(qstampRoot(ROOT));
+const qstamp = require('@quantovainc/qstamp');
 const BIN = path.join(ROOT, 'bin', 'qlog.js');
 const CHECKPOINT_MAX = 64 * 1024;
 const ENVELOPE_MAX = 1024 * 1024;

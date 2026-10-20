@@ -7,10 +7,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const ql = require('..');
-const { makeChain, client, SEED, qstampRoot } = require('./chain');
+const { makeChain, client, SEED } = require('./chain');
 
 const ROOT = path.join(__dirname, '..');
-const qstamp = require(qstampRoot(ROOT));
+const qstamp = require('@quantovainc/qstamp');
 const iso = (s) => new Date(s * 1000).toISOString();
 
 function pinned(t) {
