@@ -85,7 +85,7 @@ test('a seal more than a day before its anchor, or an anchor after the time of v
     log.push(ql.append(log, { kind: 'event', digest: 'a'.repeat(64), time: iso(at - 1) }));
     chain.nextBlockTime = anchoredAt;
     const [cp] = await ql.anchor([ql.checkpoint(log, { key, sealedAt: iso(at) })], Object.assign({ seed: SEED, index: 0 }, ep));
-    return { log, opts: Object.assign({ writerKeyId: ql.keyId(key), checkpoints: [cp] }, ep) };
+    return { log, opts: Object.assign({ writerKeyId: ql.keyId(key), checkpoints: [cp], maxGapSeconds: 5 * 86400 }, ep) };
   };
   const old = await sealed(now - 3 * 86400 - 60, now - 60);
   const fresh = await sealed(now - 180, now - 60);

@@ -120,7 +120,7 @@ test('endpoints chosen by the caller need trustCustomEndpoints, loopback needs a
   log.push(ql.append(log, { kind: 'event', payload: Buffer.from('e1'), time: iso(t0 + 60) }));
   const cp = await anchorAt(ql.checkpoint(log, { key: w, sealedAt: iso(t0 + 120) }), t0 + 180);
   chain.setTime(now);
-  const base = { writerKeyId: ql.keyId(w), checkpoints: [cp] };
+  const base = { writerKeyId: ql.keyId(w), checkpoints: [cp], maxGapSeconds: 86400 };
   const untrusted = await ql.verify(log, Object.assign({ clients: ep.clients, at: new Date().toISOString() }, base));
   assert.notStrictEqual(untrusted.status, 'valid');
   const loop = await ql.verify(log, Object.assign({ trustCustomEndpoints: true, rpc: 'http://127.0.0.1:9', at: new Date().toISOString() }, base));
