@@ -519,45 +519,7 @@ function readAt(fd, offset, length) {
   return buf.subarray(0, off);
 }
 
-function lineAt(fd, offset, end) {
-  const chunk = readAt(fd, offset, Math.min(LINE_BYTES_MAX, end - offset));
-  const nl = chunk.indexOf(10);
-  if (nl < 0) return null;
-  const entry = ql.fromJsonl(decodeLog(chunk.subarray(0, nl + 1)))[0];
-  return { entry, next: offset + nl + 1 };
-}
-
-function nextLineStart(fd, from, end) {
-  if (from >= end) return end;
-  const chunk = readAt(fd, from - 1, Math.min(LINE_BYTES_MAX, end - from + 1));
-  const nl = chunk.indexOf(10);
-  return nl < 0 ? end : from + nl;
-}
-
-function findEntry(fd, seq, end) {
-  let lo = 0;
-  let hi = end;
-  const first = lineAt(fd, 0, end);
-  if (!first) return null;
-  if (first.entry.seq === seq) return first.entry;
-  if (first.entry.seq > seq) return null;
-  while (hi - lo > 1) {
-    const mid = Math.floor((lo + hi) / 2);
-    const p = nextLineStart(fd, Math.max(mid, lo + 1), end);
-    if (p >= hi) {
-      hi = mid;
-      continue;
-    }
-    const at = lineAt(fd, p, end);
-    if (!at) return null;
-    if (at.entry.seq === seq) return at.entry;
-    if (at.entry.seq < seq) lo = p;
-    else hi = p;
-  }
-  return null;
-}
-
-function recordedTail(file, fd, refs) {
+function recordedTail(file, fd) {
   const state = readState(file);
   if (!state) return null;
   const st = fs.fstatSync(fd, { bigint: true });
@@ -576,12 +538,6 @@ function recordedTail(file, fd, refs) {
     if (lineStart === 0 && last.seq !== 0) return null;
     const log = [];
     log[last.seq] = lines[0];
-    for (const r of refs) {
-      if (!Number.isSafeInteger(r) || r < 0 || r >= last.seq) continue;
-      const found = findEntry(fd, r, lineStart);
-      if (!found) return null;
-      log[r] = found;
-    }
     return { log, size };
   } catch (e) {
     return null;
@@ -601,7 +557,7 @@ function appendEntry(file, build, refs) {
       const st = fs.fstatSync(fd);
       if (!st.isFile()) throw usageError('the log file must be a regular file');
       if (st.nlink !== 1) throw usageError('the log file has other hard links, which would let two writers bypass the lock');
-      const recorded = recordedTail(file, fd, refs || []);
+      const recorded = refs && refs.length ? null : recordedTail(file, fd);
       let log;
       let size;
       if (recorded) {
