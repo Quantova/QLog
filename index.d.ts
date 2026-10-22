@@ -93,6 +93,7 @@ export interface PayloadCheck {
 }
 
 export interface VerifyOptions {
+  network: 'testnet' | 'custom';
   writerKeyId?: string;
   writerPublicKey?: Uint8Array | string;
   checkpoints?: Checkpoint[];

@@ -78,7 +78,7 @@ test('a seal more than a day before its anchor, or an anchor after the time of v
   });
   const now = Math.floor(Date.now() / 1000);
   const chain = makeChain(ROOT, { time: now - 4 * 86400 });
-  const ep = { trustCustomEndpoints: true, clients: [client(chain, 'a'), client(chain, 'b')] };
+  const ep = { network: 'testnet', trustCustomEndpoints: true, clients: [client(chain, 'a'), client(chain, 'b')] };
   const key = ql.generateKey();
   const sealed = async (at, anchoredAt) => {
     const log = [ql.create({ key, time: iso(at - 2) })];

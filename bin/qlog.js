@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const ql = require('..');
+const qstamp = require('@quantovainc/qstamp');
 const { chainProblem } = require('../lib/log');
 const F = require('../lib/format');
 
@@ -30,10 +31,10 @@ const HELP = `qlog, post quantum tamper evident logs with Quantova time proofs
               [--ref SEQ --after <anchored checkpoint>] [--note TEXT]
   qlog heartbeat <log> [--note TEXT]
   qlog checkpoint <log> --key <writer keyfile> [--note TEXT] --out FILE
-  qlog anchor <checkpoint>... --seed-file <file> [--index N] [--rpc URL]... [--trust-single-endpoint] [--allow-endpoint HOST]... [--allow-loopback] [--max-fee N]
+  qlog anchor <checkpoint>... --network NAME --seed-file <file> [--index N] [--rpc URL]... [--trust-single-endpoint] [--allow-endpoint HOST]... [--allow-loopback] [--max-fee N]
   qlog complete <checkpoint>... --pending FILE [--tx ID] [--rpc URL]... [--trust-single-endpoint] [--allow-endpoint HOST]...
                 [--allow-loopback]
-  qlog verify <log> (--writer-key-id HEX | --writer-public-key FILE) [--checkpoint FILE]...
+  qlog verify <log> --network NAME (--writer-key-id HEX | --writer-public-key FILE) [--checkpoint FILE]...
               [--max-gap SECONDS] [--require-intent-first] [--payload SEQ=FILE]...
               [--allow-unanchored] [--at TIME] [--max-anchor-delay SECONDS] [--expect-sender ADDRESS]... [--rpc URL]...
               [--trust-custom-endpoints] [--trust-single-endpoint] [--allow-endpoint HOST]... [--allow-loopback] [--json]
@@ -47,7 +48,9 @@ heartbeats written after a silence verify INVALID. An anchor counts only when it
 certificate or by official endpoints of two different operators, any other anchor is UNPROVEN and never VALID.
 Endpoints given with --rpc are consulted by verify only with --trust-custom-endpoints, loopback endpoints only
 with --allow-loopback and private network endpoints only when named with --allow-endpoint. --expect-sender names
-the account that must have signed each anchor.
+the account that must have signed each anchor. --network names the network the checkpoints are anchored on,
+testnet for the public network, and verify also takes custom for a chain reached only through endpoints given
+with --rpc and --trust-custom-endpoints. An anchor recorded on another network fails.
 
 Exit codes are 0 for valid, 1 for invalid or an error, 2 for indeterminate or unproven and 64 for usage errors.`;
 
@@ -55,6 +58,13 @@ function usageError(message) {
   const e = new Error(message);
   e.usage = true;
   return e;
+}
+
+function networkFlag(flags, verifying) {
+  const names = Object.keys(qstamp.NETWORKS).concat(verifying ? ['custom'] : []);
+  if (flags.network === undefined) throw usageError('--network is required');
+  if (!names.includes(flags.network)) throw usageError('--network is one of ' + names.join(', ') + ', the network the checkpoints are anchored on');
+  return flags.network;
 }
 
 function endpointOptions(flags) {
@@ -74,9 +84,9 @@ const SPEC = {
   append: { flags: [], values: ['kind', 'payload-file', 'digest', 'ref', 'after', 'note'] },
   heartbeat: { flags: [], values: ['note'] },
   checkpoint: { flags: ['force'], values: ['key', 'note', 'out'] },
-  anchor: { flags: ['trust-single-endpoint', 'allow-loopback'], values: ['seed-file', 'index', 'max-fee'], multi: ['rpc', 'allow-endpoint'] },
+  anchor: { flags: ['trust-single-endpoint', 'allow-loopback'], values: ['seed-file', 'index', 'max-fee', 'network'], multi: ['rpc', 'allow-endpoint'] },
   complete: { flags: ['trust-single-endpoint', 'allow-loopback'], values: ['pending', 'tx'], multi: ['rpc', 'allow-endpoint'] },
-  verify: { flags: ['allow-unanchored', 'require-intent-first', 'json', 'trust-single-endpoint', 'trust-custom-endpoints', 'allow-loopback'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'at', 'max-anchor-delay'], multi: ['checkpoint', 'payload', 'rpc', 'allow-endpoint', 'expect-sender'] },
+  verify: { flags: ['allow-unanchored', 'require-intent-first', 'json', 'trust-single-endpoint', 'trust-custom-endpoints', 'allow-loopback'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'at', 'max-anchor-delay', 'network'], multi: ['checkpoint', 'payload', 'rpc', 'allow-endpoint', 'expect-sender'] },
 };
 
 function parse(command, argv) {
@@ -706,6 +716,7 @@ async function cmdAnchor(positional, flags) {
   const envs = positional.map((f) => readJson(f, 'checkpoint', true, CHECKPOINT_MAX));
   let index = 0;
   if (flags.index !== undefined) index = seqFlag(flags.index, 'index');
+  const network = networkFlag(flags, false);
   const seed = readSeed(flags['seed-file'] || process.env.QSTAMP_SEED_FILE, '--seed-file of a funded Quantova account');
   let saved = false;
   const keep = (pending) => {
@@ -715,7 +726,7 @@ async function cmdAnchor(positional, flags) {
   };
   let anchored;
   try {
-    anchored = await ql.anchor(envs, { seed, index, network: 'testnet', ...endpointOptions(flags), maxFee: flags['max-fee'], onPending: keep });
+    anchored = await ql.anchor(envs, { seed, index, network, ...endpointOptions(flags), maxFee: flags['max-fee'], onPending: keep });
   } catch (e) {
     if (e && e.pending && typeof e.pending === 'object') {
       try {
@@ -799,6 +810,7 @@ async function cmdVerify(positional, flags) {
     if (!/^[1-9][0-9]{0,9}$/.test(flags['max-anchor-delay'])) throw usageError('--max-anchor-delay is a whole number of seconds');
     opts.maxAnchorDelay = Number(flags['max-anchor-delay']);
   }
+  opts.network = networkFlag(flags, true);
   Object.assign(opts, endpointOptions(flags));
   if (flags['expect-sender']) opts.expectedSender = flags['expect-sender'];
   const text = readLogText(positional[0]);

@@ -24,7 +24,7 @@ function pinFakes(t) {
 
 function fakeNetwork(start) {
   const chain = makeChain(ROOT, { time: start - 3600 });
-  const ep = { trustCustomEndpoints: true, clients: [client(chain, 'a'), client(chain, 'b')] };
+  const ep = { network: 'testnet', trustCustomEndpoints: true, clients: [client(chain, 'a'), client(chain, 'b')] };
   const stamp = async (env, t) => {
     chain.nextBlockTime = t;
     return (await ql.anchor(env, Object.assign({ seed: SEED, index: 0 }, ep)))[0];

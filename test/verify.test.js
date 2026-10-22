@@ -26,7 +26,7 @@ function pinned(t) {
 function world(startedAgo) {
   const now = Math.floor(Date.now() / 1000);
   const chain = makeChain(ROOT, { time: now - startedAgo - 3600 });
-  const ep = { trustCustomEndpoints: true, clients: [client(chain, 'a'), client(chain, 'b')] };
+  const ep = { network: 'testnet', trustCustomEndpoints: true, clients: [client(chain, 'a'), client(chain, 'b')] };
   const anchorAt = async (env, t) => {
     chain.nextBlockTime = t;
     return (await ql.anchor(env, Object.assign({ seed: SEED, index: 0 }, ep)))[0];
@@ -78,7 +78,7 @@ test('an entry dated before the checkpoint it follows verifies invalid', async (
   const cp = ql.checkpoint(log, { key: w, sealedAt: iso(now - 300) });
   log.push(ql.append(log, { kind: 'event', payload: Buffer.from('b'), time: iso(now - 400) }));
   const cp2 = ql.checkpoint(log, { key: w, sealedAt: iso(now - 200) });
-  const r = await ql.verify(log, { writerKeyId: ql.keyId(w), checkpoints: [cp, cp2], requireAnchor: false, at: iso(now) });
+  const r = await ql.verify(log, { network: 'testnet', writerKeyId: ql.keyId(w), checkpoints: [cp, cp2], requireAnchor: false, at: iso(now) });
   assert.strictEqual(r.status, 'invalid');
   assert.match(failed(r, 'sealing order').detail, /dated into the past/);
 });
@@ -91,7 +91,7 @@ test('verification never falls back to the local clock when the chain time fails
   const cp = ql.checkpoint(log, { key: w, sealedAt: iso(now - 200) });
   const down = { base: 'https://down.example', async nodeInfo() { throw new Error('refused by test'); }, async transaction() { return null; } };
   const down2 = Object.assign({}, down, { base: 'https://down2.example' });
-  const r = await ql.verify(log, { writerKeyId: ql.keyId(w), checkpoints: [cp], requireAnchor: false, maxGapSeconds: 3600, trustCustomEndpoints: true, clients: [down, down2] });
+  const r = await ql.verify(log, { network: 'custom', writerKeyId: ql.keyId(w), checkpoints: [cp], requireAnchor: false, maxGapSeconds: 3600, trustCustomEndpoints: true, clients: [down, down2] });
   assert.strictEqual(r.status, 'indeterminate');
   const c = failed(r, 'chain time');
   assert.ok(c && c.transport);
@@ -108,7 +108,7 @@ test('a fabricated receipt from endpoints that are not pinned operators never ve
   const r = await ql.verify(log, Object.assign({ writerKeyId: ql.keyId(w), checkpoints: [cp] }, ep));
   assert.notStrictEqual(r.status, 'valid');
   assert.ok(r.checks.some((c) => c.unproven && !c.ok));
-  const single = await ql.verify(log, { writerKeyId: ql.keyId(w), checkpoints: [cp], trustCustomEndpoints: true, clients: [ep.clients[0]], trustSingleEndpoint: true });
+  const single = await ql.verify(log, { network: 'custom', writerKeyId: ql.keyId(w), checkpoints: [cp], trustCustomEndpoints: true, clients: [ep.clients[0]], trustSingleEndpoint: true });
   assert.notStrictEqual(single.status, 'valid');
 });
 
@@ -120,9 +120,10 @@ test('endpoints chosen by the caller need trustCustomEndpoints, loopback needs a
   log.push(ql.append(log, { kind: 'event', payload: Buffer.from('e1'), time: iso(t0 + 60) }));
   const cp = await anchorAt(ql.checkpoint(log, { key: w, sealedAt: iso(t0 + 120) }), t0 + 180);
   chain.setTime(now);
-  const base = { writerKeyId: ql.keyId(w), checkpoints: [cp], maxGapSeconds: 86400 };
+  const base = { network: 'testnet', writerKeyId: ql.keyId(w), checkpoints: [cp], maxGapSeconds: 86400 };
   const untrusted = await ql.verify(log, Object.assign({ clients: ep.clients, at: new Date().toISOString() }, base));
   assert.notStrictEqual(untrusted.status, 'valid');
+  await assert.rejects(ql.verify(log, Object.assign({ clients: ep.clients, at: new Date().toISOString() }, base, { network: 'custom' })), /trustCustomEndpoints/);
   const loop = await ql.verify(log, Object.assign({ trustCustomEndpoints: true, rpc: 'http://127.0.0.1:9', at: new Date().toISOString() }, base));
   assert.notStrictEqual(loop.status, 'valid');
   const plainResult = await ql.verify(log, Object.assign({}, base, ep));
@@ -133,6 +134,8 @@ test('endpoints chosen by the caller need trustCustomEndpoints, loopback needs a
   assert.notStrictEqual(wrong.status, 'valid');
   const right = await ql.verify(log, Object.assign({ expectedSender: chain.core.address(SEED, 0) }, base, ep));
   assert.strictEqual(right.status, 'valid', JSON.stringify(right.checks.filter((c) => !c.ok)));
+  const custom = await ql.verify(log, Object.assign({ expectedSender: chain.core.address(SEED, 0) }, base, ep, { network: 'custom' }));
+  assert.strictEqual(custom.status, 'valid', JSON.stringify(custom.checks.filter((c) => !c.ok)));
 });
 
 test('options are read only from the object given and never from Object.prototype', async () => {
@@ -141,7 +144,7 @@ test('options are read only from the object given and never from Object.prototyp
   const log = [ql.create({ key: w, time: iso(now - 600) })];
   log.push(ql.append(log, { kind: 'event', payload: Buffer.from('a'), time: iso(now - 500) }));
   const cp = ql.checkpoint(log, { key: w, sealedAt: iso(now - 300) });
-  const opts = { writerKeyId: ql.keyId(w), checkpoints: [cp], at: iso(now) };
+  const opts = { network: 'testnet', writerKeyId: ql.keyId(w), checkpoints: [cp], at: iso(now) };
   const before = await ql.verify(log, opts);
   assert.notStrictEqual(before.status, 'valid');
   try {

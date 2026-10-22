@@ -32,7 +32,7 @@ test('hostile log, checkpoint and pending stamp files make the command line exit
     const openIntent = w.ql.toJsonl(w.log.slice(0, 3));
     const appendTo = put('append.jsonl', openIntent);
     const digest = 'ab'.repeat(32);
-    const verifyTail = ['--writer-key-id', w.writerKeyId, '--allow-unanchored', '--max-gap', '600', '--at', w.at];
+    const verifyTail = ['--network', 'testnet', '--writer-key-id', w.writerKeyId, '--allow-unanchored', '--max-gap', '600', '--at', w.at];
 
     const control = await runCli(BIN, ['verify', log, '--checkpoint', head].concat(verifyTail));
     assert.strictEqual(control.code, 0, control.out + control.err);
