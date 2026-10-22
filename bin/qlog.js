@@ -21,16 +21,17 @@ const LOG_MAX = 256 * 1024 * 1024;
 const STATE_FORMAT = 'qlog-append-state/1';
 const STATE_MAX = 4096;
 const LINE_BYTES_MAX = 4 * 8192 + 1;
+const NOTE_FILE_MAX = 64 * 1024;
 
 const HELP = `qlog, post quantum tamper evident logs with Quantova time proofs
 
   qlog keygen <keyfile>
   qlog key <keyfile>
-  qlog init <log> --key <writer keyfile> [--note TEXT]
+  qlog init <log> --key <writer keyfile> [--note-file FILE]
   qlog append <log> --kind event|intent|action (--payload-file FILE | --digest HEX)
-              [--ref SEQ --after <anchored checkpoint>] [--note TEXT]
-  qlog heartbeat <log> [--note TEXT]
-  qlog checkpoint <log> --key <writer keyfile> [--note TEXT] --out FILE
+              [--ref SEQ --after <anchored checkpoint>] [--note-file FILE]
+  qlog heartbeat <log> [--note-file FILE]
+  qlog checkpoint <log> --key <writer keyfile> [--note-file FILE] --out FILE
   qlog anchor <checkpoint>... --network NAME --seed-file <file> [--index N] [--rpc URL]... [--trust-single-endpoint] [--allow-endpoint HOST]... [--allow-loopback] [--max-fee N]
   qlog complete <checkpoint>... --pending FILE [--tx ID] [--rpc URL]... [--trust-single-endpoint] [--allow-endpoint HOST]...
                 [--allow-loopback]
@@ -41,7 +42,9 @@ const HELP = `qlog, post quantum tamper evident logs with Quantova time proofs
 
 A log is a file of JSON lines. Appending needs no key, the writer seals the head with a signed
 checkpoint and anchors it, and only sealed entries are proven. An action names its intent with --ref
-and the anchored checkpoint covering that intent with --after. If an anchor is interrupted after its
+and the anchored checkpoint covering that intent with --after. A note is read from the file named by
+--note-file, or from standard input when the file is -, so it never appears in the shell history or the
+process list. If an anchor is interrupted after its
 transaction was sent, the pending stamp is kept beside the first checkpoint and complete finishes it.
 With --max-gap every entry must be proven by an anchored checkpoint within that gap of its own time, so
 heartbeats written after a silence verify INVALID. An anchor counts only when it is proven by a finality
@@ -80,10 +83,10 @@ function endpointOptions(flags) {
 const SPEC = {
   keygen: { flags: ['force'], values: [] },
   key: { flags: [], values: [] },
-  init: { flags: ['force'], values: ['key', 'note'] },
-  append: { flags: [], values: ['kind', 'payload-file', 'digest', 'ref', 'after', 'note'] },
-  heartbeat: { flags: [], values: ['note'] },
-  checkpoint: { flags: ['force'], values: ['key', 'note', 'out'] },
+  init: { flags: ['force'], values: ['key', 'note', 'note-file'] },
+  append: { flags: [], values: ['kind', 'payload-file', 'digest', 'ref', 'after', 'note', 'note-file'] },
+  heartbeat: { flags: [], values: ['note', 'note-file'] },
+  checkpoint: { flags: ['force'], values: ['key', 'note', 'note-file', 'out'] },
   anchor: { flags: ['trust-single-endpoint', 'allow-loopback'], values: ['seed-file', 'index', 'max-fee', 'network'], multi: ['rpc', 'allow-endpoint'] },
   complete: { flags: ['trust-single-endpoint', 'allow-loopback'], values: ['pending', 'tx'], multi: ['rpc', 'allow-endpoint'] },
   verify: { flags: ['allow-unanchored', 'require-intent-first', 'json', 'trust-single-endpoint', 'trust-custom-endpoints', 'allow-loopback'], values: ['writer-key-id', 'writer-public-key', 'max-gap', 'at', 'max-anchor-delay', 'network'], multi: ['checkpoint', 'payload', 'rpc', 'allow-endpoint', 'expect-sender'] },
@@ -617,6 +620,33 @@ function readDigestOption(flags) {
   return { payload: readPayload(flags['payload-file']) };
 }
 
+function noteOf(flags) {
+  if (flags.note !== undefined) throw usageError('--note is no longer taken on the command line, where it shows in the shell history and the process list, give --note-file FILE, or --note-file - to read it from standard input');
+  const file = flags['note-file'];
+  if (file === undefined) return undefined;
+  let raw;
+  if (file === '-') {
+    try {
+      raw = fs.readFileSync(0);
+    } catch (e) {
+      throw usageError('--note-file - could not read standard input');
+    }
+    if (raw.length > NOTE_FILE_MAX) throw usageError('--note-file holds more than ' + NOTE_FILE_MAX + ' bytes');
+  } else {
+    const fd = openRegular(file, 'note file');
+    try {
+      raw = readAll(fd, 'note file', NOTE_FILE_MAX);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  try {
+    return UTF8.decode(raw).replace(/\r?\n$/, '');
+  } catch (e) {
+    throw usageError('--note-file must hold UTF-8 text');
+  }
+}
+
 function seqFlag(value, name) {
   if (!/^\d{1,9}$/.test(value)) throw usageError('--' + name + ' is a whole number');
   return Number(value);
@@ -624,7 +654,8 @@ function seqFlag(value, name) {
 
 async function cmdInit(positional, flags) {
   if (positional.length !== 1) throw usageError('init takes one log file path');
-  const entry = withSeed(need(flags, 'key'), '--key', (seed) => ql.create({ key: seed, note: flags.note }));
+  const note = noteOf(flags);
+  const entry = withSeed(need(flags, 'key'), '--key', (seed) => ql.create({ key: seed, note }));
   atomicWrite(positional[0], ql.toJsonl([entry]), flags.force);
   console.log('log ' + entry.logId + ' started by writer ' + entry.digest + ', written to ' + safe(positional[0]));
   return 0;
@@ -636,7 +667,7 @@ async function cmdAppend(positional, flags) {
   if (!['event', 'intent', 'action'].includes(kind)) throw usageError('--kind is event, intent or action');
   if ((flags.ref !== undefined || flags.after !== undefined) && kind !== 'action') throw usageError('only an action takes --ref and --after');
   if (flags.after !== undefined && flags.ref === undefined) throw usageError('--after needs --ref, the intent the action carries out');
-  const opts = Object.assign({ kind, note: flags.note }, readDigestOption(flags));
+  const opts = Object.assign({ kind, note: noteOf(flags) }, readDigestOption(flags));
   if (flags.ref !== undefined) opts.ref = seqFlag(flags.ref, 'ref');
   if (flags.after !== undefined) opts.after = readJson(flags.after, 'checkpoint', false, CHECKPOINT_MAX);
   const entry = await appendEntry(positional[0], (log) => ql.append(log, opts), opts.ref === undefined ? [] : [opts.ref]);
@@ -646,7 +677,8 @@ async function cmdAppend(positional, flags) {
 
 async function cmdHeartbeat(positional, flags) {
   if (positional.length !== 1) throw usageError('heartbeat takes one log file path');
-  const entry = await appendEntry(positional[0], (log) => ql.heartbeat(log, { note: flags.note }));
+  const note = noteOf(flags);
+  const entry = await appendEntry(positional[0], (log) => ql.heartbeat(log, { note }));
   console.log('heartbeat ' + entry.seq + ' appended to log ' + entry.logId);
   return 0;
 }
@@ -664,7 +696,8 @@ async function cmdCheckpoint(positional, flags) {
     err.invalid = true;
     throw err;
   }
-  const env = withSeed(need(flags, 'key'), '--key', (seed) => ql.checkpoint(log, { key: seed, note: flags.note }));
+  const note = noteOf(flags);
+  const env = withSeed(need(flags, 'key'), '--key', (seed) => ql.checkpoint(log, { key: seed, note }));
   atomicWrite(out, asciiJson(env) + '\n', flags.force);
   console.log('checkpoint of log ' + env.statement.logId + ' through entry ' + env.statement.seq + ', head ' + env.statement.head + ', written to ' + safe(out));
   return 0;

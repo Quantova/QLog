@@ -120,7 +120,7 @@ QLog requires Node 20 or later.
 qlog keygen writer.key
 qlog key writer.key > writer.pub.json
 
-qlog init agent.log --key writer.key --note "Payments agent"
+printf "Payments agent" | qlog init agent.log --key writer.key --note-file -
 
 qlog append agent.log --kind intent --payload-file request.json
 qlog checkpoint agent.log --key writer.key --out cp-1.json
@@ -134,7 +134,7 @@ qlog anchor cp-2.json --network testnet --seed-file account.key
 qlog verify agent.log --network testnet --writer-public-key writer.pub.json --checkpoint cp-1.json --checkpoint cp-2.json --require-intent-first --max-gap 600 --payload 1=request.json
 ```
 
-Appends to one log are serialised by a lock file beside it, a log with other hard links is refused, and each append restores the file if the write fails. After every append the tool records the size, the change times, the file identity and the hash of the last entry in a state file beside the log. The next append reads only that last entry when the log is still exactly as recorded, and checks the whole chain before it writes whenever the state file is missing or the log was changed by anything else, so the cost of an append does not grow with the length of the log and no append extends a log whose end it has not checked. The verify command always checks the whole chain. If an anchor is interrupted after its transaction was sent, the pending stamp is saved beside the first checkpoint and the complete command finishes it without paying again. Checkpoints without anchors are accepted only with the allow unanchored flag. The command exits with status 0 when the result is valid, 1 when it is invalid or cannot be read, 2 when it cannot be decided, and 64 for usage errors. Key files must be readable only by their owner, and key and log files are never followed through symbolic links.
+A note is read from the file named by --note-file, or from standard input when the file is given as -, so it never appears in the shell history or the process list. Appends to one log are serialised by a lock file beside it, a log with other hard links is refused, and each append restores the file if the write fails. After every append the tool records the size, the change times, the file identity and the hash of the last entry in a state file beside the log. The next append reads only that last entry when the log is still exactly as recorded, and checks the whole chain before it writes whenever the state file is missing or the log was changed by anything else, so the cost of an append does not grow with the length of the log and no append extends a log whose end it has not checked. The verify command always checks the whole chain. If an anchor is interrupted after its transaction was sent, the pending stamp is saved beside the first checkpoint and the complete command finishes it without paying again. Checkpoints without anchors are accepted only with the allow unanchored flag. The command exits with status 0 when the result is valid, 1 when it is invalid or cannot be read, 2 when it cannot be decided, and 64 for usage errors. Key files must be readable only by their owner, and key and log files are never followed through symbolic links.
 
 ## Programmatic use
 
